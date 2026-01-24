@@ -1,0 +1,27 @@
+# odc-project.yml
+project:
+  name: rechtspraak-scraper
+  description: "Dutch court decisions (uitspraken) from rechtspraak.nl"
+  owner: erik
+
+# Queue: ClickHouse-based (rechtspraak_pending view)
+queue:
+  type: clickhouse
+  table: rechtspraak_pending
+
+# ClickHouse tables
+storage:
+  database: default
+  tables:
+    - rechtspraak_eclis      # All known ECLIs
+    - rechtspraak_uitspraken # Scraped metadata
+
+# Resource requirements
+resources:
+  cpu: 500
+  memory: 512
+
+# Single worker, slow and steady
+scaling:
+  min_workers: 1
+  max_workers: 1
