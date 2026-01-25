@@ -114,8 +114,8 @@ def parse_uitspraak(xml_content: bytes) -> Optional[dict]:
     return {
         "ecli": ecli,
         "case_number": case_number,
-        "decision_date": decision_date.isoformat() if decision_date else None,
-        "publication_date": publication_date.isoformat() if publication_date else None,
+        "decision_date": decision_date,
+        "publication_date": publication_date,
         "court": court,
         "court_type": court_type,
         "procedure_type": procedure,
