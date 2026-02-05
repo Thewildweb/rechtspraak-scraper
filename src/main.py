@@ -177,13 +177,21 @@ def fetch_uitspraak(ecli: str, minio_client: Minio = None) -> tuple[dict | None,
 
 
 def get_indexed_months(client) -> set[str]:
-    """Get months that already have indexed ECLIs in ClickHouse."""
+    """Get months that we've already indexed from the tracking table."""
     result = client.query("""
-        SELECT DISTINCT formatDateTime(last_modified, '%Y-%m-01') as month
-        FROM rechtspraak_eclis
-        WHERE last_modified >= '2000-01-01'
+        SELECT formatDateTime(month, '%Y-%m-%d') as month_str
+        FROM rechtspraak_sitemap_months
     """)
     return {row[0] for row in result.result_rows}
+
+
+def record_indexed_month(client, month: str, ecli_count: int):
+    """Record that we've indexed a sitemap month."""
+    client.insert(
+        "rechtspraak_sitemap_months",
+        [(date.fromisoformat(month), ecli_count)],
+        column_names=["month", "ecli_count"],
+    )
 
 
 def phase1_index(full_reindex: bool = False):
@@ -240,7 +248,10 @@ def phase1_index(full_reindex: bool = False):
             )
 
             total_eclis += len(entries)
-            log("INFO", f"Indexed {from_date}", count=len(entries), progress=f"{fetched}/{len(ranges)-skipped}")
+
+        # Record that we've indexed this month (even if empty)
+        record_indexed_month(client, from_date, len(entries))
+        log("INFO", f"Indexed {from_date}", count=len(entries), progress=f"{fetched}/{len(ranges)-skipped}")
 
         time.sleep(0.5)  # Be gentle with sitemap requests
 
