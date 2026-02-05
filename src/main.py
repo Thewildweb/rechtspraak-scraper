@@ -176,16 +176,51 @@ def fetch_uitspraak(ecli: str, minio_client: Minio = None) -> tuple[dict | None,
         return None, None
 
 
-def phase1_index():
-    """Phase 1: Scrape all sitemaps to discover ECLIs."""
-    log("INFO", f"Phase 1: Indexing sitemaps from {START_YEAR}")
+def get_indexed_months(client) -> set[str]:
+    """Get months that already have indexed ECLIs in ClickHouse."""
+    result = client.query("""
+        SELECT DISTINCT formatDateTime(last_modified, '%Y-%m-01') as month
+        FROM rechtspraak_eclis
+        WHERE last_modified >= '2000-01-01'
+    """)
+    return {row[0] for row in result.result_rows}
+
+
+def phase1_index(full_reindex: bool = False):
+    """Phase 1: Scrape sitemaps to discover ECLIs.
+
+    Optimization: Skip months that already have data, except for the last 2 months
+    which are always re-checked to catch new additions.
+
+    Args:
+        full_reindex: If True, re-fetch all months regardless of existing data.
+    """
+    log("INFO", f"Phase 1: Indexing sitemaps from {START_YEAR}", full_reindex=full_reindex)
 
     client = get_clickhouse()
     ranges = generate_monthly_ranges(START_YEAR)
+
+    # Get months we've already indexed
+    indexed_months = get_indexed_months(client)
+    log("INFO", f"Found {len(indexed_months)} already-indexed months in ClickHouse")
+
+    # Always re-check last 2 months to catch new ECLIs
+    recent_cutoff = date.today().replace(day=1) - relativedelta(months=2)
+
     total_eclis = 0
+    skipped = 0
+    fetched = 0
 
     for i, (from_date, to_date) in enumerate(ranges):
+        month_date = date.fromisoformat(from_date)
+
+        # Skip if already indexed AND older than recent cutoff (unless full reindex)
+        if not full_reindex and from_date in indexed_months and month_date < recent_cutoff:
+            skipped += 1
+            continue
+
         entries = fetch_sitemap(from_date, to_date)
+        fetched += 1
 
         if entries:
             # Prepare rows for insertion
@@ -205,11 +240,11 @@ def phase1_index():
             )
 
             total_eclis += len(entries)
-            log("INFO", f"Indexed {from_date}", count=len(entries), progress=f"{i+1}/{len(ranges)}")
+            log("INFO", f"Indexed {from_date}", count=len(entries), progress=f"{fetched}/{len(ranges)-skipped}")
 
         time.sleep(0.5)  # Be gentle with sitemap requests
 
-    log("INFO", f"Phase 1 complete", total_eclis=total_eclis)
+    log("INFO", f"Phase 1 complete", total_eclis=total_eclis, months_fetched=fetched, months_skipped=skipped)
     return total_eclis
 
 
@@ -276,12 +311,15 @@ def main():
     parser = argparse.ArgumentParser(description="Rechtspraak.nl scraper")
     parser.add_argument("--phase", choices=["index", "fetch", "all"], default="all",
                         help="Which phase to run (default: all)")
+    parser.add_argument("--full-reindex", action="store_true",
+                        help="Re-fetch all months, ignoring already-indexed data")
     args = parser.parse_args()
 
-    log("INFO", "Starting rechtspraak scraper", phase=args.phase, store_xml=STORE_XML)
+    log("INFO", "Starting rechtspraak scraper", phase=args.phase, store_xml=STORE_XML,
+        full_reindex=args.full_reindex)
 
     if args.phase in ("index", "all"):
-        phase1_index()
+        phase1_index(full_reindex=args.full_reindex)
 
     if args.phase in ("fetch", "all"):
         phase2_fetch()
